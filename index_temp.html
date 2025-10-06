@@ -1,0 +1,542 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Бюджетный чек-лист</title>
+    <script src="https://unpkg.com/react@17/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@17/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            background-color: #f8fafc;
+        }
+        .completed-item {
+            opacity: 0.7;
+        }
+        
+        /* iOS-style checkbox */
+        .ios-checkbox {
+            display: none;
+        }
+        
+        .ios-checkbox-label {
+            display: inline-block;
+            width: 51px;
+            height: 31px;
+            background: #e5e7eb;
+            border-radius: 50px;
+            position: relative;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        
+        .ios-checkbox-label:after {
+            content: '';
+            position: absolute;
+            top: 2px;
+            left: 2px;
+            width: 27px;
+            height: 27px;
+            background: white;
+            border-radius: 50%;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            transition: all 0.3s ease;
+        }
+        
+        .ios-checkbox:checked + .ios-checkbox-label {
+            background: #10b981;
+        }
+        
+        .ios-checkbox:checked + .ios-checkbox-label:after {
+            left: 22px;
+        }
+        
+        .ios-checkbox:disabled + .ios-checkbox-label {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        /* Progress bar animations */
+        .progress-bar {
+            transition: width 0.5s ease-in-out;
+        }
+        
+        .item-progress {
+            background: linear-gradient(90deg, #3b82f6, #8b5cf6);
+        }
+    </style>
+</head>
+<body class="min-h-screen bg-gray-50">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+
+        // Основной компонент приложения
+        function App() {
+            const [lists, setLists] = useState([]);
+            const [activeListIndex, setActiveListIndex] = useState(0);
+            const [budget, setBudget] = useState(0);
+            const [newItemName, setNewItemName] = useState('');
+            const [newItemPrice, setNewItemPrice] = useState('');
+            const [newListName, setNewListName] = useState('');
+            const [showNewListForm, setShowNewListForm] = useState(false);
+            const [itemProgress, setItemProgress] = useState({});
+
+            // Загрузка данных из localStorage при монтировании
+            useEffect(() => {
+                const savedLists = localStorage.getItem('shoppingLists');
+                const savedProgress = localStorage.getItem('itemProgress');
+                
+                if (savedLists) {
+                    setLists(JSON.parse(savedLists));
+                } else {
+                    // Инициализация с примером списка
+                    const initialLists = [
+                        {
+                            id: 1,
+                            name: 'Продукты',
+                            items: [
+                                { id: 1, name: 'Молоко', price: 50, completed: false },
+                                { id: 2, name: 'Картошка', price: 50, completed: false }
+                            ]
+                        }
+                    ];
+                    setLists(initialLists);
+                }
+                
+                if (savedProgress) {
+                    setItemProgress(JSON.parse(savedProgress));
+                }
+            }, []);
+
+            // Сохранение данных в localStorage при изменении
+            useEffect(() => {
+                localStorage.setItem('shoppingLists', JSON.stringify(lists));
+            }, [lists]);
+            
+            useEffect(() => {
+                localStorage.setItem('itemProgress', JSON.stringify(itemProgress));
+            }, [itemProgress]);
+
+            // Получение активного списка
+            const activeList = lists[activeListIndex] || { items: [] };
+
+            // Расчет стоимости невыполненных элементов
+            const remainingCost = activeList.items
+                .filter(item => !item.completed)
+                .reduce((sum, item) => sum + item.price, 0);
+
+            // Расчет стоимости выполненных элементов
+            const completedCost = activeList.items
+                .filter(item => item.completed)
+                .reduce((sum, item) => sum + item.price, 0);
+
+            // Прогресс списка (основанный на оставшихся элементах)
+            const listProgress = activeList.items.length > 0 
+                ? Math.round((completedCost / (completedCost + remainingCost)) * 100)
+                : 0;
+
+            // Расчет процента доступных элементов от оставшихся
+            const availablePercentage = remainingCost > 0 && budget > 0 
+                ? Math.min(100, Math.round((budget / remainingCost) * 100))
+                : budget > 0 ? 100 : 0;
+
+            // Определение, на какие элементы хватает бюджета
+            const affordableItems = [];
+            let affordableCost = 0;
+            
+            // Сортируем элементы по цене (от дешевых к дорогим)
+            const sortedItems = [...activeList.items]
+                .filter(item => !item.completed)
+                .sort((a, b) => a.price - b.price);
+            
+            for (const item of sortedItems) {
+                if (affordableCost + item.price <= budget) {
+                    affordableItems.push(item);
+                    affordableCost += item.price;
+                } else {
+                    break;
+                }
+            }
+
+            // Расчет прогресса бюджета для каждого элемента
+            const getItemBudgetProgress = (item) => {
+                if (item.completed || budget === 0) return 0;
+                return Math.min(100, Math.round((budget / item.price) * 100));
+            };
+
+            // Обработчики событий
+            const handleAddItem = () => {
+                if (!newItemName.trim() || !newItemPrice || newItemPrice <= 0) return;
+
+                const newItem = {
+                    id: Date.now(),
+                    name: newItemName,
+                    price: parseInt(newItemPrice),
+                    completed: false
+                };
+
+                const updatedLists = [...lists];
+                updatedLists[activeListIndex].items.push(newItem);
+                setLists(updatedLists);
+                setNewItemName('');
+                setNewItemPrice('');
+            };
+
+            const handleToggleItem = (itemId) => {
+                const updatedLists = [...lists];
+                const itemIndex = updatedLists[activeListIndex].items.findIndex(item => item.id === itemId);
+                if (itemIndex !== -1) {
+                    updatedLists[activeListIndex].items[itemIndex].completed = 
+                        !updatedLists[activeListIndex].items[itemIndex].completed;
+                    setLists(updatedLists);
+                }
+            };
+
+            const handleDeleteItem = (itemId) => {
+                const updatedLists = [...lists];
+                updatedLists[activeListIndex].items = updatedLists[activeListIndex].items.filter(item => item.id !== itemId);
+                setLists(updatedLists);
+                
+                // Удаляем прогресс элемента
+                const updatedProgress = { ...itemProgress };
+                delete updatedProgress[itemId];
+                setItemProgress(updatedProgress);
+            };
+
+            const handleAddList = () => {
+                if (!newListName.trim()) return;
+
+                const newList = {
+                    id: Date.now(),
+                    name: newListName,
+                    items: []
+                };
+
+                setLists([...lists, newList]);
+                setActiveListIndex(lists.length);
+                setNewListName('');
+                setShowNewListForm(false);
+            };
+
+            const handleDeleteList = (index) => {
+                if (lists.length <= 1) return;
+                
+                const updatedLists = lists.filter((_, i) => i !== index);
+                setLists(updatedLists);
+                
+                if (activeListIndex >= updatedLists.length) {
+                    setActiveListIndex(updatedLists.length - 1);
+                }
+            };
+
+            const handleItemProgressChange = (itemId, progress) => {
+                setItemProgress(prev => ({
+                    ...prev,
+                    [itemId]: Math.max(0, Math.min(100, progress))
+                }));
+            };
+
+            return (
+                <div className="container mx-auto px-4 py-8 max-w-4xl">
+                    <header className="text-center mb-8">
+                        <h1 className="text-3xl font-bold text-indigo-700">Бюджетный чек-лист</h1>
+                        <p className="text-gray-600 mt-2">Отслеживайте покупки и бюджет</p>
+                    </header>
+
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                        {/* Левая колонка - управление списками */}
+                        <div className="bg-white rounded-lg shadow p-6">
+                            <div className="flex justify-between items-center mb-4">
+                                <h2 className="text-xl font-semibold">Мои списки</h2>
+                                <button 
+                                    onClick={() => setShowNewListForm(true)}
+                                    className="bg-indigo-500 text-white px-3 py-1 rounded-md hover:bg-indigo-600 transition"
+                                >
+                                    + Новый
+                                </button>
+                            </div>
+
+                            {showNewListForm && (
+                                <div className="mb-4 p-3 bg-gray-50 rounded">
+                                    <input
+                                        type="text"
+                                        value={newListName}
+                                        onChange={(e) => setNewListName(e.target.value)}
+                                        placeholder="Название списка"
+                                        className="w-full p-2 border rounded mb-2"
+                                    />
+                                    <div className="flex space-x-2">
+                                        <button 
+                                            onClick={handleAddList}
+                                            className="bg-green-500 text-white px-3 py-1 rounded flex-1 hover:bg-green-600"
+                                        >
+                                            Добавить
+                                        </button>
+                                        <button 
+                                            onClick={() => setShowNewListForm(false)}
+                                            className="bg-gray-500 text-white px-3 py-1 rounded flex-1 hover:bg-gray-600"
+                                        >
+                                            Отмена
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
+
+                            <div className="space-y-2">
+                                {lists.map((list, index) => (
+                                    <div 
+                                        key={list.id}
+                                        className={`flex justify-between items-center p-3 rounded cursor-pointer ${
+                                            index === activeListIndex ? 'bg-indigo-100 border border-indigo-300' : 'bg-gray-50 hover:bg-gray-100'
+                                        }`}
+                                        onClick={() => setActiveListIndex(index)}
+                                    >
+                                        <div className="flex-1">
+                                            <div className="font-medium">{list.name}</div>
+                                            <div className="flex items-center justify-between mt-1">
+                                                <span className="text-sm text-gray-500">
+                                                    Прогресс: {listProgress}%
+                                                </span>
+                                                <span className="text-sm text-gray-500">
+                                                    {list.items.filter(item => !item.completed).length} осталось
+                                                </span>
+                                            </div>
+                                            {/* Прогресс-бар списка */}
+                                            <div className="w-full bg-gray-200 rounded-full h-2 mt-2">
+                                                <div 
+                                                    className="item-progress h-2 rounded-full progress-bar" 
+                                                    style={{ width: `${listProgress}%` }}
+                                                ></div>
+                                            </div>
+                                        </div>
+                                        {lists.length > 1 && (
+                                            <button 
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    handleDeleteList(index);
+                                                }}
+                                                className="text-red-500 hover:text-red-700 ml-2"
+                                            >
+                                                ×
+                                            </button>
+                                        )}
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+
+                        {/* Центральная колонка - элементы списка */}
+                        <div className="bg-white rounded-lg shadow p-6 lg:col-span-2">
+                            <div className="flex justify-between items-center mb-6">
+                                <h2 className="text-xl font-semibold">{activeList.name || 'Список покупок'}</h2>
+                                <div className="text-lg font-medium">
+                                    Осталось: <span className="text-orange-600">{remainingCost}р</span>
+                                </div>
+                            </div>
+
+                            {/* Форма добавления элемента */}
+                            <div className="mb-6 p-4 bg-gray-50 rounded-lg">
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                                    <input
+                                        type="text"
+                                        value={newItemName}
+                                        onChange={(e) => setNewItemName(e.target.value)}
+                                        placeholder="Название товара"
+                                        className="p-2 border rounded"
+                                    />
+                                    <input
+                                        type="number"
+                                        value={newItemPrice}
+                                        onChange={(e) => setNewItemPrice(e.target.value)}
+                                        placeholder="Цена (руб)"
+                                        className="p-2 border rounded"
+                                    />
+                                    <button 
+                                        onClick={handleAddItem}
+                                        className="bg-indigo-500 text-white p-2 rounded hover:bg-indigo-600 transition"
+                                    >
+                                        Добавить товар
+                                    </button>
+                                </div>
+                            </div>
+
+                            {/* Список элементов */}
+                            <div className="space-y-4">
+                                {activeList.items.length > 0 ? (
+                                    activeList.items.map(item => {
+                                        const budgetProgress = getItemBudgetProgress(item);
+                                        const customProgress = itemProgress[item.id] || 0;
+                                        
+                                        return (
+                                            <div 
+                                                key={item.id} 
+                                                className={`p-4 border rounded-lg ${
+                                                    item.completed ? 'completed-item bg-green-50' : 'bg-white'
+                                                }`}
+                                            >
+                                                <div className="flex items-center justify-between">
+                                                    <div className="flex items-center space-x-3">
+                                                        <input
+                                                            type="checkbox"
+                                                            id={`checkbox-${item.id}`}
+                                                            checked={item.completed}
+                                                            onChange={() => handleToggleItem(item.id)}
+                                                            className="ios-checkbox"
+                                                        />
+                                                        <label 
+                                                            htmlFor={`checkbox-${item.id}`}
+                                                            className="ios-checkbox-label"
+                                                        ></label>
+                                                        <div>
+                                                            <span className={`font-medium ${item.completed ? 'text-gray-500' : 'text-gray-900'}`}>
+                                                                {item.name}
+                                                            </span>
+                                                            <div className="text-sm text-gray-500">
+                                                                {item.price}р
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                    <button 
+                                                        onClick={() => handleDeleteItem(item.id)}
+                                                        className="text-red-500 hover:text-red-700 p-1"
+                                                    >
+                                                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                                        </svg>
+                                                    </button>
+                                                </div>
+
+                                                {/* Прогресс-бары элемента */}
+                                                <div className="space-y-2">
+                                                    {/* Прогресс бюджета */}
+                                                    {!item.completed && budget > 0 && (
+                                                        <div>
+                                                            <div className="flex justify-between text-xs mb-1">
+                                                                <span className="text-gray-600">Прогресс покупки</span>
+                                                                <span className="font-medium">{budgetProgress}%</span>
+                                                            </div>
+                                                            <div className="w-full bg-gray-200 rounded-full h-2">
+                                                                <div 
+                                                                    className="item-progress h-2 rounded-full progress-bar" 
+                                                                    style={{ width: `${budgetProgress}%` }}
+                                                                ></div>
+                                                            </div>
+                                                       </div>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        );
+                                    })
+                                ) : (
+                                    <div className="text-center py-8 text-gray-500">
+                                        Список пуст. Добавьте товары для отслеживания.
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Бюджетная панель */}
+                    <div className="bg-white rounded-lg shadow p-6 mt-6">
+                        <h2 className="text-xl font-semibold mb-4">Бюджет и доступные покупки</h2>
+                        
+                        <div className="mb-6">
+                            <label className="block text-gray-700 mb-2">Ваш бюджет (руб):</label>
+                            <input
+                                type="number"
+                                value={budget}
+                                onChange={(e) => setBudget(parseInt(e.target.value))}
+                                className="p-2 border rounded w-full max-w-xs outline-none"
+                            />
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            {/* Статистика бюджета */}
+                            <div className="bg-gray-50 p-4 rounded-lg">
+                                <h3 className="font-medium mb-3">Статистика бюджета</h3>
+                                <div className="space-y-2">
+                                    <div className="flex justify-between">
+                                        <span>Выполнено:</span>
+                                        <span className="font-medium text-green-600">{completedCost}р</span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                        <span>Осталось оплатить:</span>
+                                        <span className="font-medium text-orange-600">{remainingCost}р</span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                        <span>Ваш бюджет:</span>
+                                        <span className="font-medium text-indigo-600">{budget}р</span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                        <span>Доступно от остатка:</span>
+                                        <span className="font-medium">{availablePercentage}%</span>
+                                    </div>
+                                </div>
+
+                                {/* Прогресс-бар бюджета */}
+                                <div className="mt-4">
+                                    <div className="flex justify-between text-sm mb-1">
+                                        <span>Покрытие бюджета</span>
+                                        <span>{availablePercentage}%</span>
+                                    </div>
+                                    <div className="w-full bg-gray-200 rounded-full h-2.5">
+                                        <div 
+                                            className="item-progress h-2.5 rounded-full progress-bar" 
+                                            style={{ width: `${availablePercentage}%` }}
+                                        ></div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Доступные покупки */}
+                            <div className="bg-gray-50 p-4 rounded-lg">
+                                <h3 className="font-medium mb-3">Доступные покупки</h3>
+                                {budget > 0 ? (
+                                    affordableItems.length > 0 ? (
+                                        <div>
+                                            <p className="text-sm text-gray-600 mb-2">
+                                                На ваш бюджет ({budget}р) вы можете купить:
+                                            </p>
+                                            <ul className="space-y-1">
+                                                {affordableItems.map(item => (
+                                                    <li key={item.id} className="flex justify-between py-1">
+                                                        <span>{item.name}</span>
+                                                        <span className="font-medium">{item.price}р</span>
+                                                    </li>
+                                                ))}
+                                            </ul>
+                                            <div className="mt-3 pt-2 border-t border-gray-300 flex justify-between font-medium">
+                                                <span>Итого:</span>
+                                                <span>{affordableCost}р</span>
+                                            </div>
+                                            <div className="mt-2 text-sm text-green-600">
+                                                Остаток бюджета: {budget - affordableCost}р
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        <p className="text-gray-600">
+                                            На ваш бюджет не хватает ни на один товар из списка.
+                                        </p>
+                                    )
+                                ) : (
+                                    <p className="text-gray-600">
+                                        Укажите ваш бюджет, чтобы увидеть доступные покупки.
+                                    </p>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        // Рендеринг приложения
+        ReactDOM.render(<App />, document.getElementById('root'));
+    </script>
+</body>
+</html>
